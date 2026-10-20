@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,6 +11,12 @@ import {
 } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { CheckCircle2 } from 'lucide-react'
+
+// Supabase 项目 mianshi-agent（新加坡区）
+// 使用 publishable key + RLS：仅允许插入，读取仅限 Supabase 后台导出
+const SUPABASE_URL = 'https://fwwivnhfcsgfbfahwfaf.supabase.co'
+const SUPABASE_KEY =
+  'sb_publishable_WNPtHMHpew1E43JA0C1YXg_LAe9OuLI'
 
 const ROLES = ['后端开发', '前端开发', '算法 / AI', '产品经理', '运营', '测试', '其他岗位']
 const YEARS = ['应届 / 1 年以内', '1–3 年', '3–5 年', '5 年以上']
@@ -26,21 +32,33 @@ const WILLINGNESS = [
   { value: 'no', label: '不会付费' },
 ]
 
-type Lead = {
+async function fetchLeadCount(): Promise<number> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/lead_count`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+  })
+  if (!res.ok) throw new Error('count failed')
+  const data = await res.json()
+  return typeof data === 'number' ? data : 0
+}
+
+async function saveLead(lead: {
   role: string
   years: string
   status: string
   contact: string
   willingness: string
-  createdAt: string
-}
-
-function loadLeads(): Lead[] {
-  try {
-    return JSON.parse(localStorage.getItem('msst_leads') ?? '[]')
-  } catch {
-    return []
-  }
+}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/leads`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify(lead),
+  })
+  if (!res.ok) throw new Error(`save failed: ${res.status}`)
 }
 
 export default function LeadForm() {
@@ -50,27 +68,40 @@ export default function LeadForm() {
   const [contact, setContact] = useState('')
   const [willingness, setWillingness] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const [total, setTotal] = useState(() => loadLeads().length)
+  const [total, setTotal] = useState<number | null>(null)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchLeadCount()
+      .then(setTotal)
+      .catch(() => setTotal(null))
+  }, [])
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!role || !years || !status || !contact.trim() || !willingness) {
       setError('请把表单填完整——尤其是付费意愿那一题，我们最想知道。')
       return
     }
-    const leads = loadLeads()
-    leads.push({
+    setSubmitting(true)
+    setError('')
+    const lead = {
       role,
       years,
       status,
       contact: contact.trim(),
       willingness,
-      createdAt: new Date().toISOString(),
-    })
-    localStorage.setItem('msst_leads', JSON.stringify(leads))
-    setTotal(leads.length)
-    setSubmitted(true)
+    }
+    try {
+      await saveLead(lead)
+      setTotal((t) => (t === null ? null : t + 1))
+      setSubmitted(true)
+    } catch {
+      setError('提交失败，请检查网络后重试，或加微信 mianshi-agent 预约。')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   if (submitted) {
@@ -80,7 +111,7 @@ export default function LeadForm() {
           <CheckCircle2 className="mx-auto h-12 w-12 text-primary" />
           <h2 className="mt-5 text-2xl font-bold">预约成功</h2>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-            你已进入内测队列（第 {total} 位）。我们按批次发出邀请，
+            你已进入内测队列。我们按批次发出邀请，
             届时会通过你留下的联系方式联系你。
           </p>
           <p className="mt-6 rounded-lg bg-secondary/60 px-4 py-3 text-xs text-muted-foreground">
@@ -98,8 +129,12 @@ export default function LeadForm() {
           锁定首批内测名额
         </h2>
         <p className="mt-3 text-center text-sm text-muted-foreground">
-          留 30 秒信息，换一整个求职季的免费陪练。已有{' '}
-          <span className="font-bold text-primary">{total}</span> 人预约。
+          留 30 秒信息，换一整个求职季的免费陪练。
+          {total !== null && (
+            <>
+              {' '}已有 <span className="font-bold text-primary">{total}</span> 人预约。
+            </>
+          )}
         </p>
 
         <form
@@ -179,8 +214,8 @@ export default function LeadForm() {
 
           {error && <p className="text-xs text-primary">{error}</p>}
 
-          <Button type="submit" size="lg" className="w-full">
-            提交预约
+          <Button type="submit" size="lg" className="w-full" disabled={submitting}>
+            {submitting ? '提交中…' : '提交预约'}
           </Button>
           <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
             提交即视为同意：联系方式仅用于内测邀请，可随时要求删除。
